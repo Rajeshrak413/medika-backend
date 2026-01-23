@@ -1,5 +1,5 @@
 const express = require('express');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 const XLSX = require('xlsx');
 const cors = require('cors');
 
@@ -7,31 +7,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Optimized transporter with connection pooling
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    pool: true, 
-    maxConnections: 5,
-    auth: { 
-        user: process.env.EMAIL_USER, 
-        pass: process.env.EMAIL_PASS 
-    }
-});
+// Initialize SendGrid with your new API Key
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-app.post('/send-manifest', (req, res) => {
-    // Handle Silent Wake-Up Ping
-    if (req.body.ping) {
-        console.log("Server Woken Up by login activity.");
-        return res.status(200).json({ success: true, message: "Awake" });
-    }
+app.post('/send-manifest', async (req, res) => {
+    // Handle silent wake-up ping
+    if (req.body.ping) return res.status(200).json({ success: true });
 
     const { operator, courier, awbs, count } = req.body;
-
-    // Send FAST response to mobile (don't wait for email)
+    
+    // Respond immediately to mobile to keep scanning fast
     res.status(200).json({ success: true });
 
-    // Background Processing: Excel Generation
     try {
+        // 1. Generate Excel Buffer
         const data = [["SL No.", "AWB NUMBER"]];
         awbs.forEach((a, i) => data.push([i + 1, a]));
         const wb = XLSX.utils.book_new();
@@ -39,20 +28,29 @@ app.post('/send-manifest', (req, res) => {
         XLSX.utils.book_append_sheet(wb, ws, "Manifest");
         const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-        const awbListText = awbs.map((a, i) => `${i + 1}. ${a}`).join('\n');
-
-        // Send Email
-        transporter.sendMail({
-            from: `"Medika Logistics" <${process.env.EMAIL_USER}>`,
-            to: "Rajeshrak413@gmail.com",
+        // 2. Setup Email using SendGrid API
+        const msg = {
+            to: 'Rajeshrak413@gmail.com',
+            from: process.env.FROM_EMAIL, 
             subject: `Manifest: ${courier} (${count} Parcels)`,
-            text: `Operator: ${operator}\nTotal Count: ${count}\n\nAWB List:\n${awbListText}`,
-            attachments: [{ filename: `${courier}_Manifest.xlsx`, content: excelBuffer }]
-        });
-    } catch (err) {
-        console.error("Background Error:", err);
+            text: `Operator: ${operator}\nTotal parcels: ${count}\n\nPlease find the Excel manifest attached.`,
+            attachments: [
+                {
+                    content: excelBuffer.toString('base64'),
+                    filename: `${courier}_Manifest.xlsx`,
+                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    disposition: 'attachment'
+                }
+            ]
+        };
+
+        // 3. Fire the email
+        await sgMail.send(msg);
+        console.log(`Success: Manifest for ${courier} emailed.`);
+    } catch (error) {
+        console.error("SendGrid error details:", error.response ? error.response.body : error);
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Fast-Server active on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
