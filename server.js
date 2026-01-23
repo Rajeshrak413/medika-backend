@@ -27,11 +27,12 @@ app.post('/send-manifest', async (req, res) => {
             }
         });
 
+        // Vertical AWB list for mobile readability
         const awbListText = awbs.map((a, i) => `${i + 1}. ${a}`).join('\n');
 
         await transporter.sendMail({
             from: `"Medika Logistics" <${process.env.EMAIL_USER}>`,
-            to: "Rajeshrak413@gmail.com", // You can add more managers here
+            to: "Rajeshrak413@gmail.com", 
             subject: `Manifest: ${courier} (${count} Parcels)`,
             text: `Operator: ${operator}\nTotal: ${count}\n\nAWB List:\n${awbListText}`,
             attachments: [{ filename: `${courier}_Manifest.xlsx`, content: excelBuffer }]
