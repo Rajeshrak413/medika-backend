@@ -13,37 +13,59 @@ app.post('/send-manifest', async (req, res) => {
     if (req.body.ping) return res.status(200).json({ success: true });
 
     const { operator, courier, awbs, count } = req.body;
+    const todayDate = new Date().toLocaleDateString('en-IN'); 
+
+    // Instant response to Mobile Portal
     res.status(200).json({ success: true });
 
     try {
-        const data = [["SL No.", "AWB NUMBER"]];
-        awbs.forEach((a, i) => data.push([i + 1, a]));
+        // 1. Generate Excel with Date and Courier Columns
+        const data = [["SL No.", "Date", "Courier Name", "AWB NUMBER"]];
+        awbs.forEach((a, i) => data.push([i + 1, todayDate, courier, a]));
+        
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet(data);
         XLSX.utils.book_append_sheet(wb, ws, "Manifest");
         const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-        // THE FIX: "From" is now structured as an object
+        // 2. Prepare the Email Message
         const msg = {
-            to: 'Rajeshrak413@gmail.com','rajeshrak413@outlook.com',
+            // Main Recipients
+            to: ['Rajeshrak413@gmail.com','rajeshrak413@outlook.com'], 
+            // CC Recipients (Add more here)
+            cc: [], 
             from: {
-                email: 'Rajeshrak413@gmail.com', // Must match your verified sender
+                email: 'Rajeshrak413@gmail.com', // Verified Sender
                 name: 'Medika Logistics Portal'
             },
-            subject: `Manifest: ${courier} (${count} Parcels)`,
-            text: `Operator: ${operator}\nTotal: ${count}\n\nPlease see attached Excel.`,
+            subject: `Outbound Manifest - ${courier} - ${todayDate}`,
+            text: `Hello,
+
+Please find the outbound manifest details below:
+
+Date: ${todayDate}
+Courier Name: ${courier}
+Operator Name: ${operator}
+Total Count of Parcels: ${count}
+
+Please find the attached Excel file for the complete AWB list.
+
+Regards,
+Outbound`,
             attachments: [{
                 content: excelBuffer.toString('base64'),
-                filename: `${courier}_Manifest.xlsx`,
+                filename: `${courier}_Manifest_${todayDate.replace(/\//g, '-')}.xlsx`,
                 type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 disposition: 'attachment'
             }]
         };
 
-        await sgMail.send(msg);
-        console.log("✅ Email sent successfully!");
+        // 3. Send Email
+        // Note: Use .send() instead of .sendMultiple() when using CC/BCC fields
+        await sgMail.send(msg); 
+        console.log(`✅ Success: Manifest for ${courier} sent with CC.`);
     } catch (error) {
-        console.error("❌ SendGrid Error Details:");
+        console.error("❌ SendGrid Error:");
         if (error.response) {
             console.error(JSON.stringify(error.response.body, null, 2));
         } else {
