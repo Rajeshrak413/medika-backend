@@ -25,7 +25,7 @@ app.post('/send-manifest', async (req, res) => {
 
         // THE FIX: "From" is now structured as an object
         const msg = {
-            to: 'Rajeshrak413@gmail.com',
+            to: 'Rajeshrak413@gmail.com','rajeshrak413@outlook.com',
             from: {
                 email: 'Rajeshrak413@gmail.com', // Must match your verified sender
                 name: 'Medika Logistics Portal'
