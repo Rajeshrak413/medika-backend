@@ -18,21 +18,20 @@ app.post('/send-manifest', async (req, res) => {
         XLSX.utils.book_append_sheet(wb, ws, "Manifest");
         const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-        // 2. Email Setup
+        // 2. Email Setup using Environment Variables
         const transporter = nodemailer.createTransport({
             service: 'gmail',
             auth: { 
-                user: 'YOUR_EMAIL@gmail.com', 
-                pass: 'YOUR_GOOGLE_APP_PASSWORD' 
+                user: process.env.EMAIL_USER, 
+                pass: process.env.EMAIL_PASS 
             }
         });
 
-        // Format AWB list one-by-one for email body
         const awbListText = awbs.map((a, i) => `${i + 1}. ${a}`).join('\n');
 
         await transporter.sendMail({
-            from: '"Medika Logistics" <YOUR_EMAIL@gmail.com>',
-            to: "MANAGER_EMAIL@gmail.com", // Change to your recipient
+            from: `"Medika Logistics" <${process.env.EMAIL_USER}>`,
+            to: "Rajeshrak413@gmail.com", // You can add more managers here
             subject: `Manifest: ${courier} (${count} Parcels)`,
             text: `Operator: ${operator}\nTotal: ${count}\n\nAWB List:\n${awbListText}`,
             attachments: [{ filename: `${courier}_Manifest.xlsx`, content: excelBuffer }]
