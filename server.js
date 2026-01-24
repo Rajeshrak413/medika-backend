@@ -31,9 +31,9 @@ app.post('/send-manifest', async (req, res) => {
         // 2. Prepare the Email Message
         const msg = {
             // Main Recipients
-            to: ['hanumanta.madival@medikabazaar.com','rajeshrak413@outlook.com','gokulkrishnan.velayutham@medikabazaar.com','bhaskar.r@medikabazaar.com'], 
+            to: ['rajeshrak413@outlook.com'], 
             // CC Recipients (Add more here)
-            cc: ['elumalai.b@medikabazaar.com'], 
+            cc: [], 
             from: {
                 email: 'Rajeshrak413@gmail.com', // Verified Sender
                 name: 'Medika Logistics Portal'
@@ -43,10 +43,11 @@ app.post('/send-manifest', async (req, res) => {
 
 Please find the outbound manifest details below:
 
-Date: ${todayDate}
-Courier Name: ${courier}
-Operator Name: ${operator}
-Total Count of Parcels: ${count}
+Date :- ${todayDate}
+Courier Name  :- ${courier}
+Operator Name :- ${operator}
+Total
+count of AWB  :- ${count}
 
 Please find the attached Excel file for the complete AWB list.
 
