@@ -31,7 +31,7 @@ app.post('/send-manifest', async (req, res) => {
         // 2. Prepare the Email Message
         const msg = {
             // Main Recipients
-            to: ['rajeshrak413@outlook.com'], 
+            to: ['rajeshrak413@outlook.com','rajeshrak413@gmail.com'], 
             // CC Recipients (Add more here)
             cc: [], 
             from: {
