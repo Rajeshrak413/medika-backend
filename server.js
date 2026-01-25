@@ -31,9 +31,9 @@ app.post('/send-manifest', async (req, res) => {
         // 2. Prepare the Email Message
         const msg = {
             // Main Recipients
-            to: ['rajeshrak413@outlook.com','rajeshrak413@gmail.com'], 
+            to: ['rajeshrak413@outlook.com','gokulkrishnan.velayutham@medikabazaar.com','bhaskar.r@medikabazaar.com','hanumanta.madival@medikabazaar.com], 
             // CC Recipients (Add more here)
-            cc: [], 
+            cc: ['elumalai.b@medikabazaar.com'], 
             from: {
                 email: 'Rajeshrak413@gmail.com', // Verified Sender
                 name: 'Medika Logistics Portal'
