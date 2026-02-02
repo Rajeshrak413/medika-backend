@@ -1,79 +1,117 @@
+require('dotenv').config();
 const express = require('express');
-const sgMail = require('@sendgrid/mail');
+const multer = require('multer');
+const nodemailer = require('nodemailer');
 const XLSX = require('xlsx');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const port = process.env.PORT || 3000;
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// ────────────────────────────────────────────────
+// Middleware
+// ────────────────────────────────────────────────
+app.use(cors()); // Allow your frontend origin (or * for testing)
+app.use(express.json()); // For any JSON payloads if needed later
 
-app.post('/send-manifest', async (req, res) => {
-    if (req.body.ping) return res.status(200).json({ success: true });
+// Multer: store files in memory (good for Render – no disk)
+const upload = multer({ storage: multer.memoryStorage() });
 
-    const { operator, courier, awbs, count } = req.body;
-    const todayDate = new Date().toLocaleDateString('en-IN'); 
-
-    // Instant response to Mobile Portal
-    res.status(200).json({ success: true });
-
-    try {
-        // 1. Generate Excel with Date and Courier Columns
-        const data = [["SL No.", "Date", "Courier Name", "AWB NUMBER"]];
-        awbs.forEach((a, i) => data.push([i + 1, todayDate, courier, a]));
-        
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(data);
-        XLSX.utils.book_append_sheet(wb, ws, "Manifest");
-        const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-        // 2. Prepare the Email Message
-        const msg = {
-            // Main Recipients
-            to: ['rajeshrak413@outlook.com','gokulkrishnan.velayutham@medikabazaar.com','bhaskar.r@medikabazaar.com','hanumanta.madival@medikabazaar.com'], 
-            // CC Recipients (Add more here)
-            cc: ['elumalai.b@medikabazaar.com'], 
-            from: {
-                email: 'Rajeshrak413@gmail.com', // Verified Sender
-                name: 'Medika Logistics Portal'
-            },
-            subject: `Outbound Manifest - ${courier} - ${todayDate}`,
-            text: `Hello,
-
-Please find the outbound manifest details below:
-
-Date :- ${todayDate}
-Courier Name  :- ${courier}
-Operator Name :- ${operator}
-Total
-count of AWB  :- ${count}
-
-Please find the attached Excel file for the complete AWB list.
-
-Regards,
-Outbound`,
-            attachments: [{
-                content: excelBuffer.toString('base64'),
-                filename: `${courier}_Manifest_${todayDate.replace(/\//g, '-')}.xlsx`,
-                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                disposition: 'attachment'
-            }]
-        };
-
-        // 3. Send Email
-        // Note: Use .send() instead of .sendMultiple() when using CC/BCC fields
-        await sgMail.send(msg); 
-        console.log(`✅ Success: Manifest for ${courier} sent with CC.`);
-    } catch (error) {
-        console.error("❌ SendGrid Error:");
-        if (error.response) {
-            console.error(JSON.stringify(error.response.body, null, 2));
-        } else {
-            console.error(error);
-        }
-    }
+// ────────────────────────────────────────────────
+// Nodemailer Transporter
+// ────────────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  service: 'gmail', // change to 'hotmail', 'yahoo', or custom SMTP
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+  // If using custom SMTP (recommended for production):
+  // host: process.env.SMTP_HOST,
+  // port: process.env.SMTP_PORT,
+  // secure: true/false,
+  // auth: { user: ..., pass: ... }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server live on ${PORT}`));
+// Verify transporter on startup (good practice)
+transporter.verify((error) => {
+  if (error) {
+    console.error('Transporter verification failed:', error);
+  } else {
+    console.log('Email transporter is ready');
+  }
+});
+
+// ────────────────────────────────────────────────
+// Endpoint: /send-manifest
+// Expects multipart/form-data with:
+// - operator, courier, count, awbs (JSON string), pdf (file)
+// ────────────────────────────────────────────────
+app.post('/send-manifest', upload.single('pdf'), async (req, res) => {
+  try {
+    const { operator, courier, count, awbs } = req.body;
+    const pdfBuffer = req.file ? req.file.buffer : null;
+
+    if (!operator || !courier || !count || !awbs) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    let awbsArray;
+    try {
+      awbsArray = JSON.parse(awbs);
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid awbs JSON' });
+    }
+
+    // ─── Generate Excel in memory ────────────────────────────────
+    const worksheet = XLSX.utils.json_to_sheet(
+      awbsArray.map((awb, i) => ({ SL: i + 1, 'AWB Number': awb }))
+    );
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Manifest');
+
+    const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    // ─── Email setup ─────────────────────────────────────────────
+    const mailOptions = {
+      from: `"Medika Logistics" <${process.env.EMAIL_USER}>`,
+      to: process.env.RECIPIENT_EMAIL || 'rajeshrak413@outlook.com',
+      subject: `Manifest - ${courier} - \( {count} parcels ( \){operator})`,
+      text: `New manifest received.\n\nOperator: ${operator}\nCourier: ${courier}\nTotal parcels: ${count}\nDate: ${new Date().toLocaleString('en-IN')}`,
+      attachments: [
+        {
+          filename: `Manifest_\( {courier}_ \){new Date().toISOString().split('T')[0]}.xlsx`,
+          content: excelBuffer,
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        },
+      ],
+    };
+
+    // Attach PDF if received
+    if (pdfBuffer) {
+      mailOptions.attachments.push({
+        filename: req.file.originalname || `Manifest_${courier}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      });
+    }
+
+    // Send email
+    const info = await transporter.sendMail(mailOptions);
+
+    console.log('Email sent:', info.messageId);
+    res.status(200).json({ success: true, message: 'Manifest emailed successfully' });
+  } catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ error: 'Failed to send email', details: error.message });
+  }
+});
+
+// Health check
+app.get('/', (req, res) => {
+  res.send('Medika Backend is running 🚀');
+});
+
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
