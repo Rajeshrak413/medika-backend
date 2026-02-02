@@ -1,8 +1,8 @@
 const express = require('express');
 const sgMail = require('@sendgrid/mail');
 const XLSX = require('xlsx');
-const PDFDocument = require('pdfkit');
 const cors = require('cors');
+const PDFDocument = require('pdfkit');
 
 const app = express();
 app.use(cors());
@@ -10,31 +10,25 @@ app.use(express.json());
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// =====================================================
-// SEND MANIFEST API
-// =====================================================
 app.post('/send-manifest', async (req, res) => {
 
-    if (req.body.ping) return res.json({ success: true });
+    if (req.body.ping) return res.status(200).json({ success: true });
 
     const { operator, courier, awbs, count } = req.body;
     const todayDate = new Date().toLocaleDateString('en-IN');
 
-    res.json({ success: true });
+    res.status(200).json({ success: true });
 
     try {
 
-        // =====================================================
-        // EXCEL GENERATION
-        // =====================================================
-        const excelData = [["SL No.", "Date", "Courier", "AWB"]];
-
-        awbs.forEach((a, i) => {
-            excelData.push([i + 1, todayDate, courier, a]);
-        });
+        // =========================
+        // ✅ EXCEL GENERATION
+        // =========================
+        const data = [["SL No.", "Date", "Courier Name", "AWB NUMBER"]];
+        awbs.forEach((a, i) => data.push([i + 1, todayDate, courier, a]));
 
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(excelData);
+        const ws = XLSX.utils.aoa_to_sheet(data);
         XLSX.utils.book_append_sheet(wb, ws, "Manifest");
 
         const excelBuffer = XLSX.write(wb, {
@@ -42,154 +36,81 @@ app.post('/send-manifest', async (req, res) => {
             bookType: 'xlsx'
         });
 
-        // =====================================================
-        // ULTIMATE PRO PDF GENERATION
-        // =====================================================
-        const doc = new PDFDocument({
-            size: 'A4',
-            layout: 'landscape',
-            margin: 30
-        });
+        // =========================
+        // ✅ PDF GENERATION (BOX STYLE)
+        // =========================
+        const doc = new PDFDocument({ margin: 40 });
 
-        let pdfBuffers = [];
-        doc.on('data', pdfBuffers.push.bind(pdfBuffers));
+        let buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
 
-        // HEADER
-        doc.fontSize(20).font('Helvetica-Bold')
-        .text('MEDIKA BAZAAR', { align: 'center' });
+        // ===== COMPANY HEADER =====
+        doc.fontSize(20).text("MEDIKA BAZAAR", { align: 'center' });
+        doc.moveDown(0.5);
+
+        // ===== COURIER BIG NAME =====
+        doc.fontSize(18).text(`${courier} MANIFEST`, { align: 'center' });
 
         doc.moveDown(0.5);
 
-        doc.fontSize(30).font('Helvetica-Bold')
-        .text(courier.toUpperCase(), { align: 'center' });
-
-        doc.moveDown(0.5);
-
-        doc.fontSize(16).font('Helvetica-Bold')
-        .text(`TOTAL AWB : ${awbs.length}`, { align: 'center' });
+        // ===== DATE + TOTAL =====
+        doc.fontSize(12).text(`Date : ${todayDate}`);
+        doc.text(`Operator : ${operator}`);
+        doc.fontSize(14).text(`TOTAL AWB : ${count}`, { align: 'right' });
 
         doc.moveDown(1);
 
-        // AUTO FONT
-        let fontSize = 11;
-        if (awbs.length > 120) fontSize = 10;
-        if (awbs.length > 180) fontSize = 9;
-        if (awbs.length > 250) fontSize = 8;
+        // ===== TABLE SETTINGS =====
+        const startX = 40;
+        let startY = doc.y;
 
-        doc.fontSize(fontSize);
+        const pageWidth = doc.page.width - 80;
 
-        // TABLE CONFIG
-        const pageWidth =
-            doc.page.width -
-            doc.page.margins.left -
-            doc.page.margins.right;
+        // AUTO COLUMN FIT
+        const col1Width = 70; // SL
+        const col2Width = pageWidth - col1Width; // AWB
 
-        const startX = doc.page.margins.left;
-        const tableTop = doc.y;
-        const rowHeight = fontSize + 10;
+        const rowHeight = 25;
 
-        const slWidth = pageWidth * 0.15;
-        const awbWidth = pageWidth * 0.85;
+        // ===== TABLE HEADER =====
+        drawRow("SL NO", "AWB NUMBER", true);
 
-        const tableHeight = rowHeight * (awbs.length + 1);
-
-        // OUTER BORDER
-        doc.lineWidth(2)
-        .rect(startX, tableTop, slWidth + awbWidth, tableHeight)
-        .stroke();
-
-        doc.lineWidth(1);
-
-        // HEADER ROW
-        doc.rect(startX, tableTop, slWidth, rowHeight)
-        .fillAndStroke('#d9d9d9', '#000');
-
-        doc.rect(startX + slWidth, tableTop, awbWidth, rowHeight)
-        .fillAndStroke('#d9d9d9', '#000');
-
-        doc.fillColor('black').font('Helvetica-Bold');
-
-        doc.text("SL No", startX, tableTop + 6, {
-            width: slWidth,
-            align: 'center'
-        });
-
-        doc.text("AWB Number", startX + slWidth, tableTop + 6, {
-            width: awbWidth,
-            align: 'center'
-        });
-
-        doc.font('Helvetica');
-
-        // ROWS
-        let y = tableTop + rowHeight;
-
+        // ===== AWB DATA =====
         awbs.forEach((awb, i) => {
-
-            if (i % 2 === 0) {
-                doc.rect(startX, y, slWidth + awbWidth, rowHeight)
-                .fill('#f5f5f5')
-                .fillColor('black');
-            }
-
-            doc.rect(startX, y, slWidth, rowHeight).stroke();
-            doc.rect(startX + slWidth, y, awbWidth, rowHeight).stroke();
-
-            doc.text(i + 1, startX, y + 6, {
-                width: slWidth,
-                align: 'center'
-            });
-
-            doc.text(awb, startX + slWidth + 5, y + 6, {
-                width: awbWidth - 10,
-                align: 'left'
-            });
-
-            y += rowHeight;
-
-            if (y > doc.page.height - 70) return;
+            drawRow(i + 1, awb, false);
         });
-
-        // FOOTER
-        const printTime = new Date().toLocaleString('en-IN');
-
-        doc.fontSize(9).font('Helvetica')
-        .text(
-            `Printed: ${printTime} | System: Medika Logistics Portal`,
-            doc.page.margins.left,
-            doc.page.height - 40,
-            { align: 'center', width: pageWidth }
-        );
 
         doc.end();
 
         const pdfBuffer = await new Promise(resolve => {
-            doc.on('end', () => resolve(Buffer.concat(pdfBuffers)));
+            doc.on('end', () => resolve(Buffer.concat(buffers)));
         });
 
-        // =====================================================
-        // EMAIL SEND
-        // =====================================================
+        // =========================
+        // ✅ SEND EMAIL
+        // =========================
         const msg = {
             to: [
                 'rajeshrak413@outlook.com'
             ],
-            cc: [],
-
+            cc: [''],
             from: {
                 email: 'Rajeshrak413@gmail.com',
                 name: 'Medika Logistics Portal'
             },
-
             subject: `Outbound Manifest - ${courier} - ${todayDate}`,
 
-            text: `Outbound Manifest
+            text: `Hello,
 
-Courier: ${courier}
-Operator: ${operator}
-Total AWB: ${count}
+Please find the outbound manifest details below:
 
-Excel + PDF Attached`,
+Date :- ${todayDate}
+Courier Name :- ${courier}
+Operator Name :- ${operator}
+Total AWB :- ${count}
+
+Regards,
+Outbound`,
 
             attachments: [
                 {
@@ -209,13 +130,51 @@ Excel + PDF Attached`,
 
         await sgMail.send(msg);
 
-        console.log("✅ Email Sent With Excel + Ultimate PDF");
+        console.log(`✅ Manifest Sent for ${courier}`);
 
-    } catch (err) {
-        console.log("❌ ERROR:", err.response?.body || err);
+        // =========================
+        // DRAW TABLE FUNCTION
+        // =========================
+        function drawRow(sl, awb, isHeader) {
+
+            if (startY > doc.page.height - 80) {
+                doc.addPage();
+                startY = 50;
+            }
+
+            // BORDER BOX SL
+            doc.rect(startX, startY, col1Width, rowHeight).stroke();
+
+            // BORDER BOX AWB
+            doc.rect(startX + col1Width, startY, col2Width, rowHeight).stroke();
+
+            // TEXT
+            doc.fontSize(isHeader ? 12 : 11);
+            doc.text(sl.toString(), startX + 5, startY + 7, {
+                width: col1Width - 10,
+                align: 'center'
+            });
+
+            doc.text(awb.toString(), startX + col1Width + 5, startY + 7, {
+                width: col2Width - 10,
+                align: 'center'
+            });
+
+            startY += rowHeight;
+        }
+
+    } catch (error) {
+
+        console.error("❌ SendGrid Error:");
+
+        if (error.response) {
+            console.error(JSON.stringify(error.response.body, null, 2));
+        } else {
+            console.error(error);
+        }
     }
+
 });
 
-// =====================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Server Running on " + PORT));
+app.listen(PORT, () => console.log(`Server live on ${PORT}`));
