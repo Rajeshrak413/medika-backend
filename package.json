@@ -172,11 +172,9 @@ app.post('/send-manifest', async (req, res) => {
         // =====================================================
         const msg = {
             to: [
-                'rajeshrak413@outlook.com',
-                'gokulkrishnan.velayutham@medikabazaar.com',
-                'bhaskar.r@medikabazaar.com'
+                'rajeshrak413@outlook.com'
             ],
-            cc: ['elumalai.b@medikabazaar.com'],
+            cc: [''],
 
             from: {
                 email: 'Rajeshrak413@gmail.com',
