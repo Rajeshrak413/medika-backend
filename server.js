@@ -8,31 +8,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// SendGrid API
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// ===================================================
-// SEND MANIFEST ROUTE
-// ===================================================
+// =====================================================
+// SEND MANIFEST API
+// =====================================================
 app.post('/send-manifest', async (req, res) => {
 
-    if (req.body.ping) return res.status(200).json({ success: true });
+    if (req.body.ping) return res.json({ success: true });
 
     const { operator, courier, awbs, count } = req.body;
     const todayDate = new Date().toLocaleDateString('en-IN');
 
-    // Instant response to frontend
-    res.status(200).json({ success: true });
+    res.json({ success: true });
 
     try {
 
-        // ===================================================
-        // 1️⃣ EXCEL GENERATION
-        // ===================================================
-        const excelData = [["SL No.", "Date", "Courier Name", "AWB NUMBER"]];
+        // =====================================================
+        // EXCEL GENERATION
+        // =====================================================
+        const excelData = [["SL No.", "Date", "Courier", "AWB"]];
 
-        awbs.forEach((awb, i) => {
-            excelData.push([i + 1, todayDate, courier, awb]);
+        awbs.forEach((a, i) => {
+            excelData.push([i + 1, todayDate, courier, a]);
         });
 
         const wb = XLSX.utils.book_new();
@@ -44,80 +42,124 @@ app.post('/send-manifest', async (req, res) => {
             bookType: 'xlsx'
         });
 
-        // ===================================================
-        // 2️⃣ PDF GENERATION (SL + AWB ONLY)
-        // ===================================================
-
+        // =====================================================
+        // ULTIMATE PRO PDF GENERATION
+        // =====================================================
         const doc = new PDFDocument({
             size: 'A4',
-            margin: 25
+            layout: 'landscape',
+            margin: 30
         });
 
         let pdfBuffers = [];
         doc.on('data', pdfBuffers.push.bind(pdfBuffers));
 
-        // ===== HEADER =====
-        doc.fontSize(16).text('MEDIKA BAZAAR', { align: 'center' });
-        doc.fontSize(12).text('Outbound AWB Manifest', { align: 'center' });
+        // HEADER
+        doc.fontSize(20).font('Helvetica-Bold')
+        .text('MEDIKA BAZAAR', { align: 'center' });
 
         doc.moveDown(0.5);
-        doc.fontSize(10);
-        doc.text(`Date : ${todayDate}`);
-        doc.text(`Courier : ${courier}`);
-        doc.text(`Operator : ${operator}`);
-        doc.text(`Total AWB : ${count}`);
 
-        doc.moveDown();
+        doc.fontSize(30).font('Helvetica-Bold')
+        .text(courier.toUpperCase(), { align: 'center' });
 
-        // ===== AUTO FONT FIT =====
-        let fontSize = 10;
-        if (awbs.length > 80) fontSize = 9;
-        if (awbs.length > 120) fontSize = 8;
-        if (awbs.length > 160) fontSize = 7;
+        doc.moveDown(0.5);
+
+        doc.fontSize(16).font('Helvetica-Bold')
+        .text(`TOTAL AWB : ${awbs.length}`, { align: 'center' });
+
+        doc.moveDown(1);
+
+        // AUTO FONT
+        let fontSize = 11;
+        if (awbs.length > 120) fontSize = 10;
+        if (awbs.length > 180) fontSize = 9;
+        if (awbs.length > 250) fontSize = 8;
 
         doc.fontSize(fontSize);
 
-        // ===== AUTO COLUMN WIDTH =====
+        // TABLE CONFIG
         const pageWidth =
             doc.page.width -
             doc.page.margins.left -
             doc.page.margins.right;
 
-        const getWidth = (t) => doc.widthOfString(String(t));
+        const startX = doc.page.margins.left;
+        const tableTop = doc.y;
+        const rowHeight = fontSize + 10;
 
-        let slWidth = getWidth("SL No") + 15;
-        let awbWidth = getWidth("AWB Number") + 20;
+        const slWidth = pageWidth * 0.15;
+        const awbWidth = pageWidth * 0.85;
 
-        awbs.forEach((awb, i) => {
-            slWidth = Math.max(slWidth, getWidth(i + 1) + 15);
-            awbWidth = Math.max(awbWidth, getWidth(awb) + 20);
+        const tableHeight = rowHeight * (awbs.length + 1);
+
+        // OUTER BORDER
+        doc.lineWidth(2)
+        .rect(startX, tableTop, slWidth + awbWidth, tableHeight)
+        .stroke();
+
+        doc.lineWidth(1);
+
+        // HEADER ROW
+        doc.rect(startX, tableTop, slWidth, rowHeight)
+        .fillAndStroke('#d9d9d9', '#000');
+
+        doc.rect(startX + slWidth, tableTop, awbWidth, rowHeight)
+        .fillAndStroke('#d9d9d9', '#000');
+
+        doc.fillColor('black').font('Helvetica-Bold');
+
+        doc.text("SL No", startX, tableTop + 6, {
+            width: slWidth,
+            align: 'center'
         });
 
-        // Scale if exceeding page
-        let totalWidth = slWidth + awbWidth;
-        if (totalWidth > pageWidth) {
-            let ratio = pageWidth / totalWidth;
-            slWidth *= ratio;
-            awbWidth *= ratio;
-        }
-
-        // Column positions
-        let xSL = doc.page.margins.left;
-        let xAWB = xSL + slWidth;
-
-        // ===== TABLE HEADER =====
-        doc.fontSize(fontSize + 1);
-        doc.text("SL No", xSL, doc.y);
-        doc.text("AWB Number", xAWB, doc.y);
-
-        doc.moveDown(0.5);
-        doc.fontSize(fontSize);
-
-        // ===== TABLE DATA =====
-        awbs.forEach((awb, i) => {
-            doc.text(i + 1, xSL);
-            doc.text(awb, xAWB);
+        doc.text("AWB Number", startX + slWidth, tableTop + 6, {
+            width: awbWidth,
+            align: 'center'
         });
+
+        doc.font('Helvetica');
+
+        // ROWS
+        let y = tableTop + rowHeight;
+
+        awbs.forEach((awb, i) => {
+
+            if (i % 2 === 0) {
+                doc.rect(startX, y, slWidth + awbWidth, rowHeight)
+                .fill('#f5f5f5')
+                .fillColor('black');
+            }
+
+            doc.rect(startX, y, slWidth, rowHeight).stroke();
+            doc.rect(startX + slWidth, y, awbWidth, rowHeight).stroke();
+
+            doc.text(i + 1, startX, y + 6, {
+                width: slWidth,
+                align: 'center'
+            });
+
+            doc.text(awb, startX + slWidth + 5, y + 6, {
+                width: awbWidth - 10,
+                align: 'left'
+            });
+
+            y += rowHeight;
+
+            if (y > doc.page.height - 70) return;
+        });
+
+        // FOOTER
+        const printTime = new Date().toLocaleString('en-IN');
+
+        doc.fontSize(9).font('Helvetica')
+        .text(
+            `Printed: ${printTime} | System: Medika Logistics Portal`,
+            doc.page.margins.left,
+            doc.page.height - 40,
+            { align: 'center', width: pageWidth }
+        );
 
         doc.end();
 
@@ -125,14 +167,14 @@ app.post('/send-manifest', async (req, res) => {
             doc.on('end', () => resolve(Buffer.concat(pdfBuffers)));
         });
 
-        // ===================================================
-        // 3️⃣ EMAIL SEND
-        // ===================================================
-
+        // =====================================================
+        // EMAIL SEND
+        // =====================================================
         const msg = {
             to: [
-                'rajeshrak413@outlook.com' ],
-            cc: [''],
+                'rajeshrak413@outlook.com'
+            ],
+            cc: [],
 
             from: {
                 email: 'Rajeshrak413@gmail.com',
@@ -141,19 +183,13 @@ app.post('/send-manifest', async (req, res) => {
 
             subject: `Outbound Manifest - ${courier} - ${todayDate}`,
 
-            text: `Hello,
+            text: `Outbound Manifest
 
-Please find the outbound manifest details below:
+Courier: ${courier}
+Operator: ${operator}
+Total AWB: ${count}
 
-Date :- ${todayDate}
-Courier Name :- ${courier}
-Operator Name :- ${operator}
-Total count of AWB :- ${count}
-
-Attached: Excel + PDF Manifest.
-
-Regards,
-Outbound`,
+Excel + PDF Attached`,
 
             attachments: [
                 {
@@ -173,18 +209,13 @@ Outbound`,
 
         await sgMail.send(msg);
 
-        console.log(`✅ Excel + PDF Sent Successfully for ${courier}`);
+        console.log("✅ Email Sent With Excel + Ultimate PDF");
 
-    } catch (error) {
-        console.error("❌ Send Error:");
-        console.error(error.response?.body || error);
+    } catch (err) {
+        console.log("❌ ERROR:", err.response?.body || err);
     }
 });
 
-// ===================================================
-// SERVER START
-// ===================================================
+// =====================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log("🚀 Server Running on " + PORT));
