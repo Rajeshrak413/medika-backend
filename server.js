@@ -1,117 +1,190 @@
-require('dotenv').config();
 const express = require('express');
-const multer = require('multer');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 const XLSX = require('xlsx');
+const PDFDocument = require('pdfkit');
 const cors = require('cors');
 
 const app = express();
-const port = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json());
 
-// ────────────────────────────────────────────────
-// Middleware
-// ────────────────────────────────────────────────
-app.use(cors()); // Allow your frontend origin (or * for testing)
-app.use(express.json()); // For any JSON payloads if needed later
+// SendGrid API
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Multer: store files in memory (good for Render – no disk)
-const upload = multer({ storage: multer.memoryStorage() });
+// ===================================================
+// SEND MANIFEST ROUTE
+// ===================================================
+app.post('/send-manifest', async (req, res) => {
 
-// ────────────────────────────────────────────────
-// Nodemailer Transporter
-// ────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  service: 'gmail', // change to 'hotmail', 'yahoo', or custom SMTP
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  // If using custom SMTP (recommended for production):
-  // host: process.env.SMTP_HOST,
-  // port: process.env.SMTP_PORT,
-  // secure: true/false,
-  // auth: { user: ..., pass: ... }
-});
+    if (req.body.ping) return res.status(200).json({ success: true });
 
-// Verify transporter on startup (good practice)
-transporter.verify((error) => {
-  if (error) {
-    console.error('Transporter verification failed:', error);
-  } else {
-    console.log('Email transporter is ready');
-  }
-});
+    const { operator, courier, awbs, count } = req.body;
+    const todayDate = new Date().toLocaleDateString('en-IN');
 
-// ────────────────────────────────────────────────
-// Endpoint: /send-manifest
-// Expects multipart/form-data with:
-// - operator, courier, count, awbs (JSON string), pdf (file)
-// ────────────────────────────────────────────────
-app.post('/send-manifest', upload.single('pdf'), async (req, res) => {
-  try {
-    const { operator, courier, count, awbs } = req.body;
-    const pdfBuffer = req.file ? req.file.buffer : null;
+    // Instant response to frontend
+    res.status(200).json({ success: true });
 
-    if (!operator || !courier || !count || !awbs) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    let awbsArray;
     try {
-      awbsArray = JSON.parse(awbs);
-    } catch (e) {
-      return res.status(400).json({ error: 'Invalid awbs JSON' });
+
+        // ===================================================
+        // 1️⃣ EXCEL GENERATION
+        // ===================================================
+        const excelData = [["SL No.", "Date", "Courier Name", "AWB NUMBER"]];
+
+        awbs.forEach((awb, i) => {
+            excelData.push([i + 1, todayDate, courier, awb]);
+        });
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(excelData);
+        XLSX.utils.book_append_sheet(wb, ws, "Manifest");
+
+        const excelBuffer = XLSX.write(wb, {
+            type: 'buffer',
+            bookType: 'xlsx'
+        });
+
+        // ===================================================
+        // 2️⃣ PDF GENERATION (SL + AWB ONLY)
+        // ===================================================
+
+        const doc = new PDFDocument({
+            size: 'A4',
+            margin: 25
+        });
+
+        let pdfBuffers = [];
+        doc.on('data', pdfBuffers.push.bind(pdfBuffers));
+
+        // ===== HEADER =====
+        doc.fontSize(16).text('MEDIKA BAZAAR', { align: 'center' });
+        doc.fontSize(12).text('Outbound AWB Manifest', { align: 'center' });
+
+        doc.moveDown(0.5);
+        doc.fontSize(10);
+        doc.text(`Date : ${todayDate}`);
+        doc.text(`Courier : ${courier}`);
+        doc.text(`Operator : ${operator}`);
+        doc.text(`Total AWB : ${count}`);
+
+        doc.moveDown();
+
+        // ===== AUTO FONT FIT =====
+        let fontSize = 10;
+        if (awbs.length > 80) fontSize = 9;
+        if (awbs.length > 120) fontSize = 8;
+        if (awbs.length > 160) fontSize = 7;
+
+        doc.fontSize(fontSize);
+
+        // ===== AUTO COLUMN WIDTH =====
+        const pageWidth =
+            doc.page.width -
+            doc.page.margins.left -
+            doc.page.margins.right;
+
+        const getWidth = (t) => doc.widthOfString(String(t));
+
+        let slWidth = getWidth("SL No") + 15;
+        let awbWidth = getWidth("AWB Number") + 20;
+
+        awbs.forEach((awb, i) => {
+            slWidth = Math.max(slWidth, getWidth(i + 1) + 15);
+            awbWidth = Math.max(awbWidth, getWidth(awb) + 20);
+        });
+
+        // Scale if exceeding page
+        let totalWidth = slWidth + awbWidth;
+        if (totalWidth > pageWidth) {
+            let ratio = pageWidth / totalWidth;
+            slWidth *= ratio;
+            awbWidth *= ratio;
+        }
+
+        // Column positions
+        let xSL = doc.page.margins.left;
+        let xAWB = xSL + slWidth;
+
+        // ===== TABLE HEADER =====
+        doc.fontSize(fontSize + 1);
+        doc.text("SL No", xSL, doc.y);
+        doc.text("AWB Number", xAWB, doc.y);
+
+        doc.moveDown(0.5);
+        doc.fontSize(fontSize);
+
+        // ===== TABLE DATA =====
+        awbs.forEach((awb, i) => {
+            doc.text(i + 1, xSL);
+            doc.text(awb, xAWB);
+        });
+
+        doc.end();
+
+        const pdfBuffer = await new Promise(resolve => {
+            doc.on('end', () => resolve(Buffer.concat(pdfBuffers)));
+        });
+
+        // ===================================================
+        // 3️⃣ EMAIL SEND
+        // ===================================================
+
+        const msg = {
+            to: [
+                'rajeshrak413@outlook.com' ],
+            cc: [''],
+
+            from: {
+                email: 'Rajeshrak413@gmail.com',
+                name: 'Medika Logistics Portal'
+            },
+
+            subject: `Outbound Manifest - ${courier} - ${todayDate}`,
+
+            text: `Hello,
+
+Please find the outbound manifest details below:
+
+Date :- ${todayDate}
+Courier Name :- ${courier}
+Operator Name :- ${operator}
+Total count of AWB :- ${count}
+
+Attached: Excel + PDF Manifest.
+
+Regards,
+Outbound`,
+
+            attachments: [
+                {
+                    content: excelBuffer.toString('base64'),
+                    filename: `${courier}_Manifest_${todayDate.replace(/\//g, '-')}.xlsx`,
+                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    disposition: 'attachment'
+                },
+                {
+                    content: pdfBuffer.toString('base64'),
+                    filename: `${courier}_Manifest_${todayDate.replace(/\//g, '-')}.pdf`,
+                    type: 'application/pdf',
+                    disposition: 'attachment'
+                }
+            ]
+        };
+
+        await sgMail.send(msg);
+
+        console.log(`✅ Excel + PDF Sent Successfully for ${courier}`);
+
+    } catch (error) {
+        console.error("❌ Send Error:");
+        console.error(error.response?.body || error);
     }
-
-    // ─── Generate Excel in memory ────────────────────────────────
-    const worksheet = XLSX.utils.json_to_sheet(
-      awbsArray.map((awb, i) => ({ SL: i + 1, 'AWB Number': awb }))
-    );
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Manifest');
-
-    const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-
-    // ─── Email setup ─────────────────────────────────────────────
-    const mailOptions = {
-      from: `"Medika Logistics" <${process.env.EMAIL_USER}>`,
-      to: process.env.RECIPIENT_EMAIL || 'rajeshrak413@outlook.com',
-      subject: `Manifest - ${courier} - \( {count} parcels ( \){operator})`,
-      text: `New manifest received.\n\nOperator: ${operator}\nCourier: ${courier}\nTotal parcels: ${count}\nDate: ${new Date().toLocaleString('en-IN')}`,
-      attachments: [
-        {
-          filename: `Manifest_\( {courier}_ \){new Date().toISOString().split('T')[0]}.xlsx`,
-          content: excelBuffer,
-          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        },
-      ],
-    };
-
-    // Attach PDF if received
-    if (pdfBuffer) {
-      mailOptions.attachments.push({
-        filename: req.file.originalname || `Manifest_${courier}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf',
-      });
-    }
-
-    // Send email
-    const info = await transporter.sendMail(mailOptions);
-
-    console.log('Email sent:', info.messageId);
-    res.status(200).json({ success: true, message: 'Manifest emailed successfully' });
-  } catch (error) {
-    console.error('Error sending email:', error);
-    res.status(500).json({ error: 'Failed to send email', details: error.message });
-  }
 });
 
-// Health check
-app.get('/', (req, res) => {
-  res.send('Medika Backend is running 🚀');
-});
-
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// ===================================================
+// SERVER START
+// ===================================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
 });
