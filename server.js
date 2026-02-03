@@ -36,7 +36,7 @@ app.post('/send-manifest', async (req, res) => {
         // =========================
         // ✅ PDF GENERATION (MULTI-COLUMN)
         // =========================
-        const doc = new PDFDocument({ size: 'A4', margin: 40, layout: 'landscape' });
+        const doc = new PDFDocument({ size: 'A4', margin: 40, layout: 'portrait' });
         let buffers = [];
         doc.on('data', buffers.push.bind(buffers));
 
